@@ -7,13 +7,18 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 // ---- knobs --------------------------------------------------------------
 const MODEL_PATH = "/models/oziel-bust.glb";
 const LINE_COLOR = "#2a2f3a"; // dark slate so lines read on the pastel hero
-// Lower opacity makes the dense triangulation read as a soft hatched
-// texture rather than a noisy line mass. Bump up if you want more bite.
-const LINE_OPACITY = 0.28;
-// Surface color sits BEHIND the wireframe so back-of-head lines can't bleed
-// through. A soft warm gray reads as a subtle silhouette against the pastel
-// hero without overpowering the page.
-const SURFACE_COLOR = "#e9e6ee";
+// Wires sit on top of the lit surface, so they only need to be delicate
+// detail — too high here and the bust starts feeling skeletal again.
+// Base opacity at the shoulders; the shader fades it further across the
+// face/head (see faceFade in the fragment shader) so the head reads
+// calmer than the body.
+const LINE_OPACITY = 0.11;
+// Soft lavender surface sits BEHIND the wireframe. Translucent + depth-writing
+// so back-of-head wires are occluded (no skeletal bleed) but the edges still
+// blend gently with the pastel hero. Reads as a soft 3D form, not a ghost.
+const SURFACE_COLOR = "#f3edf8";
+const SURFACE_OPACITY = 0.42;
+const SURFACE_ROUGHNESS = 0.88;
 const ROTATION_SPEED = 0.18; // radians/sec around Y (auto-rotation)
 const SCALE = 1.0; // model uniform scale
 const BG_COLOR: string | null = null; // null = transparent canvas; e.g. "#0b1020" for navy
@@ -89,6 +94,18 @@ export function WireframeBust({
       100,
     );
     camera.position.set(0, 0, 3.6);
+
+    // --- lights ---
+    // Hemisphere fill gives a soft sky/ground gradient on the bust without
+    // any harsh shadow direction. Slight cool tint on the ground side picks
+    // up the lavender surface tone. The directional key adds just enough
+    // form so the face doesn't look flat, positioned front-top-right to
+    // catch the cheek/nose silhouette as the bust auto-rotates.
+    const hemi = new THREE.HemisphereLight("#ffffff", "#d8d2e4", 0.7);
+    scene.add(hemi);
+    const key = new THREE.DirectionalLight("#ffffff", 0.85);
+    key.position.set(2.5, 3, 2.5);
+    scene.add(key);
 
     // Root that holds the loaded model; we rotate this, not the camera.
     const root = new THREE.Group();
@@ -232,7 +249,12 @@ export function WireframeBust({
             // structural, not a saturated rainbow.
             color = mix(uBase, color, uSaturation);
 
-            gl_FragColor = vec4(color, uOpacity);
+            // Fade the wires across the face/head so the upper portion
+            // feels calmer than the shoulders. Shoulders stay at full
+            // uOpacity, head settles around 65% of that.
+            float faceFade = mix(1.0, 0.65, smoothstep(0.55, 0.92, t));
+
+            gl_FragColor = vec4(color, uOpacity * faceFade);
           }
         `,
       });
@@ -248,12 +270,17 @@ export function WireframeBust({
         if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh);
       });
 
-      // Surface material sits behind the wireframe so the bust reads as a
-      // solid 3D object instead of a transparent ghost during rotation.
-      // polygonOffset pushes it slightly back in depth so the wireframe
-      // lines stay crisp without z-fighting against the triangles.
-      const surfaceMaterial = new THREE.MeshBasicMaterial({
+      // Soft translucent surface sits behind the wireframe. depthWrite stays
+      // on so the surface still occludes back-facing wires (no skeletal
+      // bleed-through), while the low opacity lets the edges blend into the
+      // pastel hero. polygonOffset nudges it back so wires don't z-fight.
+      const surfaceMaterial = new THREE.MeshStandardMaterial({
         color: new THREE.Color(SURFACE_COLOR),
+        roughness: SURFACE_ROUGHNESS,
+        metalness: 0,
+        transparent: true,
+        opacity: SURFACE_OPACITY,
+        depthWrite: true,
         polygonOffset: true,
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
@@ -267,12 +294,14 @@ export function WireframeBust({
         // Solid surface clone of the mesh.
         const surface = new THREE.Mesh(geom, surfaceMaterial);
         surface.applyMatrix4(mesh.matrixWorld);
+        surface.renderOrder = 0;
         wireGroup.add(surface);
 
         const wireGeom = new THREE.WireframeGeometry(geom);
         const lines = new THREE.LineSegments(wireGeom, lineMaterial);
         // Bake the mesh's world transform so we don't need the original hierarchy.
         lines.applyMatrix4(mesh.matrixWorld);
+        lines.renderOrder = 1;
         wireGroup.add(lines);
       }
 

@@ -1268,8 +1268,8 @@ export function StarIntro() {
         <div
           className="pointer-events-auto absolute"
           style={{
-            right: 50,
-            bottom: -50,
+            right: 150,
+            bottom: 30,
             width: 550,
             height: 690,
           }}
