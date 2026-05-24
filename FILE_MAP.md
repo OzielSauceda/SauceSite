@@ -10,7 +10,7 @@ Quick-reference index for every source file. Use this to jump straight to the fi
 - **Styling:** Tailwind v4 (CSS-first, via `@tailwindcss/postcss`) + `tw-animate-css`
 - **UI primitives:** shadcn ("base-nova" style) on top of `@base-ui/react`
 - **Animation:** `motion` (Framer Motion v12)
-- **3D:** `three` (raw WebGL renderer, no React-Three-Fiber) — used by Steezy in `star-intro.tsx` AND by the node spheres in `systems-diagram.tsx`
+- **3D:** `three` (raw WebGL renderer, no React-Three-Fiber) — used by Steezy in `star-intro.tsx`, the node spheres in `systems-diagram.tsx`, and the GLB-loaded `wireframe-bust.tsx`
 - **Path alias:** `@/*` → `./src/*`
 
 ---
@@ -60,6 +60,7 @@ Major internals:
   - `useEffect` blocks handle: scroll lock, intro-done event, tagline cycling, Steezy's dot-landing flight, window resize re-snap, idle playful spins, the **skip** path (snap name to upper-left then run cascade), the **click** path (measure letter X positions then sweep through waypoints triggering letter formation), and tap handling.
   - Renders the four animated gradient blobs (pink/cyan/yellow/violet) as the background.
   - Renders `<SystemsDiagram visible={selectorMode} />` (lives in the same hero section).
+  - Renders `<WireframeBust />` dynamically (`next/dynamic`) once `nameSettled` is true, anchored bottom-right of the hero. Pre-warms the chunk + three.js bits during the intro so it appears without a load spike when Skip fires.
   - Renders the Skip button (top-right) until `selectorMode`.
   - Renders the centered `<motion.div>` holding the `<h1>` name + tagline `<motion.p>` + the long descriptive copy block.
   - Renders Steezy (`StarCanvas` inside a draggable `motion.div`) at z-30 on top of everything.
@@ -72,21 +73,16 @@ Major internals:
 - Uses `scrollIntoView({ behavior: "smooth" })` for nav clicks (intentionally local — does not set global `scroll-behavior`).
 - **Change here:** rail position, mobile menu, active-state styling. Section list itself lives in `lib/sections.ts`.
 
-### `hero-node-portrait.tsx`  (`"use client"`)
-- **Abstract identity mesh** — small node/edge SVG fragments scattered around the hero. NOT a portrait, NOT in a card, fully transparent. Exported as `HeroNodePortrait` for import-site compatibility; internally a composer over a list of `FRAGMENTS`.
-- Wrapper is `absolute inset-0 z-0 overflow-hidden`, hidden below `sm`. Mounts when `visible` flips on (gated in `star-intro.tsx` by `nameSettled && !selectorMode`) and fades out cleanly via `AnimatePresence` once `selectorMode` takes over (so `SystemsDiagram` owns the field).
-- Built-in fragments (`FRAGMENTS` array, top of file):
-  - `hairArc` — upper-right whitespace, the strongest cluster.
-  - `iStarCluster` — tiny scatter near where the dotless ı sits after the name settles. Sits behind Steezy (z-30).
-  - `smileCurve` — gentle U lower-right of the title area, intensity ~0.55.
-  - `contourUpper` / `contourLower` — short loose curves in the far-right background, intensity ~0.45–0.5.
-- Each fragment carries its own `mask` (radial `SOFT_MASK` or `HORIZONTAL_MASK` linear) so its bounding box feathers into the page — no rectangle edges anywhere.
-- Visual tokens (top of file): `NODE_R = 0.55`, `EDGE_STROKE = 0.18`, `NODE_OPACITY = 0.55`, `EDGE_OPACITY = 0.35`. Per-fragment `intensity` multiplies opacity.
-- Edges are computed by `chainEdges(n, skipOne)` — only the first `chainFrac` (default 0.7) of each fragment's nodes get chained, so trailing nodes act as scattered texture. With `skipOne: true`, `i → i+2` edges add a denser local fabric.
-- All fragments are right- or position-anchored away from the section rail's right-8 gutter (≥ 8vw from the right edge).
-- Animation: per-cluster `delayBase` staggers the five fragments in sequence (0.5s → 1.35s). Within each cluster, nodes scale/fade in with a small per-index stagger; edges draw via `pathLength`.
-- Accepts `visible: boolean` and optional `active?: boolean` (currently unused; kept on the type for future use).
-- **Change here:** add/remove/retune entries in `FRAGMENTS`, tweak `NODE_R`/`EDGE_STROKE`/opacity tokens, swap `SOFT_MASK`/`HORIZONTAL_MASK` per cluster.
+### `wireframe-bust.tsx`  (`"use client"`)
+- Renders a GLB-loaded bust of Oziel as a soft pastel surface overlaid with delicate dark wireframe edges. Mounted by `star-intro.tsx` via `next/dynamic` once the name has settled, anchored bottom-right of the hero (550 × 690 CSS pixels).
+- Three.js stack (no R3F): `PerspectiveCamera` + `Scene` + `MeshStandardMaterial` body + `LineSegments` edges (from `THREE.EdgesGeometry`). Loads `/models/oziel-bust.glb` via `GLTFLoader` from `three/examples/jsm/loaders/GLTFLoader.js`.
+- **Two passes, one mesh:** the underlying surface (`SURFACE_COLOR = "#f3edf8"`, `SURFACE_OPACITY = 0.42`, depth-writing) sits behind the wireframe so back-of-head wires get occluded — no skeletal bleed. The wireframe (`LINE_COLOR = "#2a2f3a"`, `LINE_OPACITY = 0.11`) reads as delicate detail on top.
+- **Custom edge fragment shader** fades line opacity further across the face/head (`faceFade`) vs. the shoulders, so the head reads calmer than the body.
+- **Fixed internal resolution** (`DESIGN_W = 550`, `DESIGN_H = 690`). The Three.js framebuffer is always this size; the canvas is stretched 100%/100% inside its parent CSS box, then the parent's `transform: scale(heroStageScale)` bitmap-scales the rendered output. **Must stay in sync with the bust div's width/height in `star-intro.tsx`.**
+- Auto-rotates around Y at `ROTATION_SPEED = 0.18 rad/s`. Drag to spin manually (`DRAG_SENSITIVITY = 0.008 rad/px`).
+- Background is transparent by default (`BG_COLOR = null`).
+- Props let callers override: `modelPath`, `lineColor`, `lineOpacity`, `rotationSpeed`, `scale`, `background`, `className`.
+- **Change here:** model file, line/surface palette + opacity, the face-vs-shoulders fade in the fragment shader, rotation speed, drag sensitivity, design resolution (sync with `star-intro.tsx`).
 
 ### `systems-diagram.tsx`  (`"use client"`)
 - Decorative animated systems graph that fades in once the intro reaches `selectorMode` (rendered by `star-intro.tsx`, not page.tsx).
@@ -110,15 +106,6 @@ Major internals:
 - `NODES`, `EDGES`, `NODE_RADIUS`, `SONAR_PINGS`, `RELEASE_PING`, `MICRO_NODES` are all hand-tuned constants at the top.
 - Hidden below `lg` breakpoint (`hidden lg:block`).
 - **Change here:** node/edge topology, label anchors (per-node `labelAnchor`), sphere radii (`NODE_RADIUS`), sphere material (roughness/metalness/clearcoat in the WebGL `useEffect`), lighting rig, hover behavior, sway baseline/amplitude, drag sensitivity (`* 0.4` in `onPointerMove`), edge gap-to-sphere (`EDGE_GAP` constant inside the tick).
-
-### `hero.tsx`  (`"use client"`)
-- **⚠ Currently unused** — `page.tsx` mounts `<StarIntro />` instead. Kept as a simpler alternative: a magnetic-letters name treatment ("Oziel Sauceda") where each letter is pulled toward the cursor via Framer Motion springs.
-- `MagneticLetter` sub-component handles per-letter pointer math (`MAGNET_RADIUS=220`, `MAGNET_STRENGTH=36`).
-- **Change here only if** swapping back to a non-3D hero, or salvage the magnetic-letters effect for elsewhere.
-
-### `ui/button.tsx`
-- shadcn-style `Button` wrapping `@base-ui/react/button`, with `cva` variants (`default`, `outline`, `secondary`, `ghost`, `destructive`, `link`) and sizes (`default`, `xs`, `sm`, `lg`, `icon`, `icon-xs`, `icon-sm`, `icon-lg`).
-- **Change here:** button visual variants/sizes. Currently not imported anywhere in the app — kept for future shadcn-style components.
 
 ---
 
@@ -146,16 +133,15 @@ Major internals:
 
 ## Public assets (`public/`)
 
-- `reference-star.webp` — reference image used while designing Steezy.
-- `reference-star-cutout.webp` — cutout variant of the same.
-- `ozzy-clean.png` — clean sketch portrait, loaded by `hero-node-portrait.tsx` as the base layer (copy of repo-root `NoNodeOzzy.png`).
-- `ozzy-node-reference.png` — node/edge styled sketch (copy of `NodeOzzy.png`) kept as a visual reference only; never loaded at runtime.
+- `models/oziel-bust.glb` — decimated bust mesh loaded by `wireframe-bust.tsx` at runtime. Hero-critical; do not rename without updating `MODEL_PATH` in that file.
+- `models/oziel-bust.original.glb` — pre-decimation source mesh, kept for re-runs of `scripts/decimate-bust.mjs`. Not loaded at runtime.
 - `oziel-portrait.jpeg` — debug-only reference photo for `systems-diagram.tsx` (see that file's `SHOW_PORTRAIT_REFERENCE`).
 
-## Repo-root assets / config
+## Repo-root scripts / config
 
-- `GraduationBear.jpg`, `ReferenceStar.webp` — loose reference images at the repo root (not in `public/`, so not served).
-- `prompt.md` — design prompt / brief.
+- `make_clean_wireframe_bust.py` — Blender-side helper to produce a clean bust mesh feeding `wireframe-bust.tsx`. Companion to `scripts/blender/create_graph_bust.py`.
+- `scripts/blender/create_graph_bust.py` — Blender script that authors the graph-style bust geometry. Run inside Blender; output gets exported to GLB.
+- `scripts/decimate-bust.mjs` — Node script that decimates `public/models/oziel-bust.original.glb` into the runtime-loaded `public/models/oziel-bust.glb`.
 - `next.config.ts` — Next.js config; only sets `turbopack.root` to the project dir.
 - `next-env.d.ts` — Next-generated TS ambient types (don't edit).
 - `tsconfig.json` — strict TS, `@/* → ./src/*` path alias, JSX `react-jsx`.
@@ -181,8 +167,9 @@ Major internals:
 | Skip button look/position | `src/components/star-intro.tsx` (Skip `<button>`) |
 | Background gradient blobs | `src/components/star-intro.tsx` (the four `motion.div`s inside the blob wrapper) |
 | Systems diagram nodes/edges/animation | `src/components/systems-diagram.tsx` |
+| Wireframe bust (mesh, line/surface look, rotation, fade shader) | `src/components/wireframe-bust.tsx` |
+| Wireframe bust mesh source / regenerate | `make_clean_wireframe_bust.py`, `scripts/blender/create_graph_bust.py`, `scripts/decimate-bust.mjs` |
 | Section navigation rail (desktop + mobile) | `src/components/section-rail.tsx` |
-| shadcn Button variants | `src/components/ui/button.tsx` |
 | Tailwind / PostCSS config | `postcss.config.mjs` (Tailwind v4 is config-less; tokens live in `globals.css`) |
 | Path alias `@/*` | `tsconfig.json` |
 
