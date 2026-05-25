@@ -146,11 +146,8 @@ Major internals:
 
 ## Public assets (`public/`)
 
-- `reference-star.webp` — reference image used while designing Steezy.
-- `reference-star-cutout.webp` — cutout variant of the same.
-- `ozzy-clean.png` — clean sketch portrait, loaded by `hero-node-portrait.tsx` as the base layer (copy of repo-root `NoNodeOzzy.png`).
-- `ozzy-node-reference.png` — node/edge styled sketch (copy of `NodeOzzy.png`) kept as a visual reference only; never loaded at runtime.
 - `oziel-portrait.jpeg` — debug-only reference photo for `systems-diagram.tsx` (see that file's `SHOW_PORTRAIT_REFERENCE`).
+- `models/` — GLB assets (e.g. `oziel-bust.glb` loaded by `wireframe-bust.tsx`).
 
 ## Repo-root assets / config
 
