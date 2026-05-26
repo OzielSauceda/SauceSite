@@ -146,8 +146,11 @@ Major internals:
 
 ## Public assets (`public/`)
 
-- `oziel-portrait.jpeg` — debug-only reference photo for `systems-diagram.tsx` (see that file's `SHOW_PORTRAIT_REFERENCE`).
-- `models/` — GLB assets (e.g. `oziel-bust.glb` loaded by `wireframe-bust.tsx`).
+- `oziel-portrait.jpeg` — source image for `portrait-stars.tsx` (sampled into the hero star field) and the debug overlay in `systems-diagram.tsx` (`SHOW_PORTRAIT_REFERENCE`).
+
+## Archive (`archive/`)
+
+- `wireframe-bust/` — retired hero accent. The Three.js + GLB chrome-bust that used to occupy the right side of the hero, plus its decimation/Blender pipeline. Re-mount instructions live in `archive/wireframe-bust/README.md`.
 
 ## Repo-root assets / config
 

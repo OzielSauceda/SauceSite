@@ -12,13 +12,28 @@ import {
 } from "motion/react";
 import * as THREE from "three";
 import dynamic from "next/dynamic";
+import { CodeMatterPortrait } from "@/components/code-matter-portrait";
 import { SystemsDiagram } from "@/components/systems-diagram";
 
-// Client-only: WebGL + GLTFLoader must not SSR.
-const WireframeBust = dynamic(
-  () => import("@/components/wireframe-bust").then((m) => m.WireframeBust),
+// Client-only: canvas 2D drifting constellation that replaces the pastel
+// blobs once `selectorMode` flips on.
+const HeroConstellation = dynamic(
+  () =>
+    import("@/components/hero-constellation").then((m) => m.HeroConstellation),
   { ssr: false },
 );
+
+// Tiny inline SVG noise tile used as a subtle film-grain overlay on top of
+// the constellation. Inline so there's no extra request; 160x160 keeps the
+// repeat invisible. Animated by drifting background-position very slowly.
+const GRAIN_DATA_URL =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">` +
+      `<filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>` +
+      `<feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.55 0"/></filter>` +
+      `<rect width="100%" height="100%" filter="url(#n)" opacity="0.5"/></svg>`,
+  );
 
 // The "i" in Oziel is rendered as the dotless Turkish ı (U+0131) so the
 // letter has no dot during the intro — Steezy lands on top of it as the
@@ -655,14 +670,6 @@ export function StarIntro() {
     };
   };
 
-  // Warm the wireframe-bust JS chunk + three.js bits during the intro so
-  // by the time `nameSettled` flips and the dynamic <WireframeBust /> tries
-  // to load, the chunk is already in cache. Removes a chunk-fetch + parse
-  // spike from the moment the user clicks Skip.
-  useEffect(() => {
-    void import("@/components/wireframe-bust");
-  }, []);
-
   // Hold the user at the top until the intro finishes — without this they
   // can scroll past Steezy mid-morph and never see the name reveal. The
   // intro-active class on <html> is toggled by globals.css to lock body
@@ -1160,22 +1167,98 @@ export function StarIntro() {
     transformOrigin: "top left",
   };
 
+  // Portrait is positioned in *artboard* coordinates (right=16, top=40,
+  // 820×820 inside the 1440×768 artboard) but rendered *outside* the
+  // artboard transform. The artboard's `scale()` was downscaling the
+  // canvas's drawing buffer into its layout box and then upscaling it
+  // back via the transform — a round-trip rasterization that softened
+  // the glyphs. Computing the viewport-pixel position here from the
+  // same scale keeps face-to-name alignment locked while letting the
+  // canvas's CSS box equal its drawing buffer 1:1 → no blur.
+  const PORTRAIT_AB_RIGHT = 16;
+  const PORTRAIT_AB_TOP = 20;
+  const PORTRAIT_AB_WIDTH = 800;
+  const PORTRAIT_AB_HEIGHT = 800;
+  // Round to whole CSS pixels — fractional CSS sizes force the browser
+  // to resample the canvas's backing buffer at sub-pixel boundaries,
+  // which softens the tiny glyphs even with a correctly-sized buffer.
+  const portraitViewportStyle = {
+    left: Math.round(
+      heroStageLeft +
+        (HERO_STAGE_MAX_WIDTH - PORTRAIT_AB_RIGHT - PORTRAIT_AB_WIDTH) *
+          heroStageScale,
+    ),
+    top: Math.round(heroStageTop + PORTRAIT_AB_TOP * heroStageScale),
+    width: Math.round(PORTRAIT_AB_WIDTH * heroStageScale),
+    height: Math.round(PORTRAIT_AB_HEIGHT * heroStageScale),
+  };
+
   return (
     <section
       ref={sectionRef}
       className="relative h-screen w-full overflow-hidden bg-neutral-50"
     >
+      {/* Post-intro backdrop stack. All three layers are mounted from the
+          start (so the crossfade is cheap) but stay at opacity 0 until
+          `selectorMode` flips on. Order back-to-front:
+            1. Warm cream wash — pulls the hero off pure white.
+            2. Drifting node/edge constellation — same visual vocabulary
+               as wireframe-bust and systems-diagram.
+            3. Fine animated film grain — gives the surface texture so it
+               doesn't read as flat color. */}
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ background: "#000000" }}
+        initial={false}
+        animate={{ opacity: selectorMode ? 1 : 0 }}
+        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+      />
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        initial={false}
+        animate={{ opacity: selectorMode ? 1 : 0 }}
+        transition={{ duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <HeroConstellation className="h-full w-full" />
+      </motion.div>
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 mix-blend-multiply"
+        style={{
+          backgroundImage: `url("${GRAIN_DATA_URL}")`,
+          backgroundRepeat: "repeat",
+        }}
+        initial={false}
+        animate={{
+          opacity: selectorMode ? 0.18 : 0,
+          backgroundPosition: ["0px 0px", "160px 80px", "0px 0px"],
+        }}
+        transition={{
+          opacity: { duration: 1.4, ease: [0.16, 1, 0.3, 1] },
+          backgroundPosition: {
+            duration: 28,
+            repeat: Infinity,
+            ease: "linear",
+          },
+        }}
+      />
       {/* Blob container scales with the hero so the pastel atmosphere stays
           proportional to the rest of the composition on every screen. The
           scale grows blobs outward from the viewport center; the section's
-          overflow-hidden clips any spill at the edges. */}
-      <div
+          overflow-hidden clips any spill at the edges. Fades OUT once
+          `selectorMode` flips on so the constellation can take over. */}
+      <motion.div
         aria-hidden
         className="pointer-events-none absolute inset-0 overflow-hidden"
         style={{
           transform: `scale(${heroStageScale})`,
           transformOrigin: "50% 50%",
         }}
+        initial={false}
+        animate={{ opacity: selectorMode ? 0 : 1 }}
+        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
       >
         <motion.div
           className="absolute -top-24 -right-32 h-[36rem] w-[36rem] rounded-full opacity-[0.32] blur-3xl"
@@ -1233,51 +1316,27 @@ export function StarIntro() {
             ease: "easeInOut",
           }}
         />
-      </div>
-      {/* Main 3D visual: wireframe bust on the right, behind the name+text.
-          MOUNTED FROM PAGE LOAD so all the heavy work (GLTF parse,
-          WireframeGeometry build, shader compile, GPU upload) finishes
-          during the Steezy intro. When `nameSettled` flips, the bust
-          fades in over already-warm GPU buffers -- no spike at that moment.
-          The load itself is wrapped in requestIdleCallback inside the
-          component, so it slots into idle gaps between Steezy's frames.
-          Hidden on mobile so the phone layout stays clean. */}
-      {/* Bust is INSIDE heroStageStyle (the 1440x768 artboard with
-          transform: scale(heroStageScale) applied). That means the bust,
-          name, blobs, and everything else in the artboard all scale by
-          the same single factor on every screen -- the page is laid out
-          once at the design reference (1440x768) and the browser scales
-          the whole composition to fit the viewport. Whatever you see at
-          1440x768 IS what shows up scaled on a 1920x947 monitor, just
-          bigger. Tune width/height (design-space px) to resize the bust;
-          tune right/bottom to reposition. */}
-      <motion.div
-        aria-hidden
-        className="absolute z-[2] hidden sm:block"
-        style={{
-          ...heroStageStyle,
-          pointerEvents: nameSettled ? undefined : "none",
-        }}
-        initial={false}
-        animate={{
-          opacity: nameSettled ? 1 : 0,
-          filter: nameSettled ? "blur(0px)" : "blur(8px)",
-        }}
-        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
-      >
-        <div
-          className="pointer-events-auto absolute"
-          style={{
-            right: 150,
-            bottom: 30,
-            width: 550,
-            height: 690,
-          }}
-        >
-          <WireframeBust className="h-full w-full" />
-        </div>
       </motion.div>
       <SystemsDiagram visible={selectorMode} />
+      {/* Mobile-only portrait: the artboard cover-scales out of view on
+          phones, so on max-md we drop back to a viewport-anchored float
+          centered below the name. Hidden on md+ — the artboard-locked
+          instance below handles every wider viewport. No CSS filter on
+          this wrapper: even filter:blur(0px) forces the child canvas
+          into a parent-rasterized backing layer that the artboard
+          transform then upscales, blurring the glyphs. */}
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute z-10 bottom-[-7vh] left-[calc(50%-11rem)] h-[70vh] w-[22rem] md:hidden"
+        initial={false}
+        animate={{ opacity: selectorMode ? 1 : 0 }}
+        transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <CodeMatterPortrait
+          visible={selectorMode}
+          className="relative h-full w-full"
+        />
+      </motion.div>
       {!selectorMode && (
         <button
           type="button"
@@ -1295,6 +1354,32 @@ export function StarIntro() {
           Skip
         </button>
       )}
+      {/* Artboard-derived portrait — position and size are computed
+          from the same heroStageScale that scales the artboard, so the
+          face's offset from the name is identical on every screen ≥ md.
+          Lives OUTSIDE the artboard transform so the canvas's drawing
+          buffer maps 1:1 to its CSS layout box; inside the transform,
+          the buffer was being rasterized at the layout size and then
+          stretched, which is what was blurring the glyphs. Hidden on
+          max-md (mobile uses the floating instance above) because the
+          artboard's right edge cover-scales off narrow viewports.
+          Entry animation is opacity-only: any transform (including a
+          translateY) promotes the canvas into a separate raster layer
+          that the compositor can leave at a stale, softened state
+          after the transition ends. */}
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute z-10 hidden md:block"
+        style={portraitViewportStyle}
+        initial={false}
+        animate={{ opacity: selectorMode ? 1 : 0 }}
+        transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <CodeMatterPortrait
+          visible={selectorMode}
+          className="relative h-full w-full"
+        />
+      </motion.div>
       <div
         className="pointer-events-none absolute z-20 flex items-center justify-center"
         style={heroStageStyle}
@@ -1333,6 +1418,28 @@ export function StarIntro() {
             });
           }}
         >
+        {/* Code-style section marker — a small monospace label above
+            the name that picks up the same cyan/glyph language as the
+            portrait. Appears once the name has settled so it lands as
+            a finishing typographic stamp, not a banner. */}
+        <motion.div
+          aria-hidden
+          initial={false}
+          animate={{
+            opacity: nameSettled ? 1 : 0,
+            y: nameSettled ? 0 : -6,
+          }}
+          transition={{
+            duration: 0.7,
+            delay: nameSettled ? 0.35 : 0,
+            ease: [0.16, 1, 0.3, 1],
+          }}
+          className="mb-3 flex items-center gap-3 pl-1 font-mono text-[10px] uppercase tracking-[0.32em] text-neutral-400 sm:text-[11px]"
+        >
+          <span className="text-cyan-300/90">[ 01 ]</span>
+          <span className="h-px w-6 bg-cyan-400/30" />
+          <span>profile</span>
+        </motion.div>
         <h1
           aria-label="Oziel Sauceda"
           className="flex text-4xl font-semibold tracking-tight whitespace-nowrap select-none sm:text-6xl md:text-7xl lg:text-8xl"
@@ -1368,7 +1475,14 @@ export function StarIntro() {
                       y: 0,
                       rotate: 0,
                       filter: "blur(0px) saturate(1)",
-                      color: "#0a0a0a",
+                      // Bound to selectorMode so letters stay dark
+                      // during the cream-bg intro and animate to a
+                      // cool near-white once the bg fades to black.
+                      // Without this, post-intro letters were
+                      // #0a0a0a on pure black — i.e. invisible. The
+                      // 0.42s color transition below plays in parallel
+                      // with the 1.1s bg fade so the two ease together.
+                      color: selectorMode ? "#e8f2ff" : "#0a0a0a",
                     };
             const SPRING = { type: "spring" as const, stiffness: 360, damping: 15, mass: 0.75 };
             const ROT_SPRING = { type: "spring" as const, stiffness: 220, damping: 12, mass: 0.7 };
@@ -1436,7 +1550,7 @@ export function StarIntro() {
           })}
         </h1>
         <motion.p
-          className="mt-2 self-start pl-1 text-[10px] font-medium uppercase tracking-[0.32em] text-neutral-500 sm:text-xs"
+          className="mt-2 self-start pl-1 text-[10px] font-medium uppercase tracking-[0.32em] text-neutral-300 sm:text-xs"
           initial={false}
           animate={{
             opacity: nameSettled ? 1 : 0,
@@ -1477,19 +1591,33 @@ export function StarIntro() {
             ease: [0.16, 1, 0.3, 1],
           }}
         >
+          {/* Tick-mark ruler in place of the previous plain rule —
+              echoes the measurement-bar language of the section rail
+              and gives the body copy a small typographic anchor that
+              matches the code-portrait aesthetic. */}
           <span
             aria-hidden
-            className="mb-5 block h-px w-10 bg-neutral-400"
-          />
-          <p className="text-base leading-relaxed text-neutral-800 sm:text-lg">
+            className="mb-5 flex h-3 items-end gap-px"
+          >
+            <span className="h-3 w-px bg-cyan-400/80" />
+            <span className="h-1.5 w-px bg-cyan-400/35" />
+            <span className="h-1.5 w-px bg-cyan-400/35" />
+            <span className="h-1.5 w-px bg-cyan-400/35" />
+            <span className="h-3 w-px bg-cyan-400/80" />
+            <span className="ml-2 h-px w-16 self-center bg-neutral-600/60" />
+          </span>
+          {/* Body copy colors lifted from neutral-800/900/500 to read
+              on the post-intro black backdrop. The italic line stays
+              one step dimmer than the main paragraph for hierarchy. */}
+          <p className="text-base leading-relaxed text-neutral-200 sm:text-lg">
             I build tools and interfaces that take{" "}
-            <span className="font-medium text-neutral-900">
+            <span className="font-medium text-white">
               dense ideas
             </span>{" "}
             seriously — without flattening them for the sake of looking
             simple.
           </p>
-          <p className="mt-4 text-sm italic leading-relaxed text-neutral-500 sm:text-[15px]">
+          <p className="mt-4 text-sm italic leading-relaxed text-neutral-400 sm:text-[15px]">
             Sometimes that&apos;s a research interface. Sometimes a
             product. Sometimes a small experiment. Sometimes it&apos;s{" "}
             <span
