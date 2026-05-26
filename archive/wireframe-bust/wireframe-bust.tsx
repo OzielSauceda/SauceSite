@@ -6,14 +6,6 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 // ---- knobs --------------------------------------------------------------
 const MODEL_PATH = "/models/oziel-bust.glb";
-const LINE_COLOR = "#2a2f3a"; // dark slate so lines read on the pastel hero
-// Lower opacity makes the dense triangulation read as a soft hatched
-// texture rather than a noisy line mass. Bump up if you want more bite.
-const LINE_OPACITY = 0.28;
-// Surface color sits BEHIND the wireframe so back-of-head lines can't bleed
-// through. A soft warm gray reads as a subtle silhouette against the pastel
-// hero without overpowering the page.
-const SURFACE_COLOR = "#e9e6ee";
 const ROTATION_SPEED = 0.18; // radians/sec around Y (auto-rotation)
 const SCALE = 1.0; // model uniform scale
 const BG_COLOR: string | null = null; // null = transparent canvas; e.g. "#0b1020" for navy
@@ -33,10 +25,6 @@ type Props = {
   className?: string;
   /** Override the default model path. */
   modelPath?: string;
-  /** Override the default line color (hex/string). */
-  lineColor?: string;
-  /** Override the default line opacity (0..1). */
-  lineOpacity?: number;
   /** Radians/sec around Y. Pass 0 to disable. */
   rotationSpeed?: number;
   /** Uniform scale applied to the loaded model. */
@@ -45,11 +33,82 @@ type Props = {
   background?: string | null;
 };
 
+// Procedural chrome / dark-marble matcap. A matcap is just a 2D image of a
+// sphere; each shaded fragment looks up its color by where its normal points
+// in screen space. So this canvas IS the lighting model — we paint a soft
+// studio-lit sphere once, and every face on the bust reads from it. Net
+// effect: a polished, sculpted look with zero real lights in the scene.
+const makeChromeMatcap = () => {
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  // Deepest shadow color fills the whole texture first — anywhere the matcap
+  // is sampled outside the painted sphere falls back to this.
+  ctx.fillStyle = "#040608";
+  ctx.fillRect(0, 0, size, size);
+
+  // Clip to the sphere's silhouette — matcap is conceptually a sphere.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.clip();
+
+  // Body shading: bright top → dark bottom, simulating studio light from above.
+  // This is what gives the bust its main sense of volume.
+  const body = ctx.createLinearGradient(0, 0, 0, size);
+  body.addColorStop(0, "#e6ecf6");
+  body.addColorStop(0.35, "#6a7a98");
+  body.addColorStop(0.7, "#1a2238");
+  body.addColorStop(1, "#040608");
+  ctx.fillStyle = body;
+  ctx.fillRect(0, 0, size, size);
+
+  // Sharp specular highlight near the top — the "polished" cue. Without
+  // this the surface reads as matte, not glossy.
+  const spec = ctx.createRadialGradient(
+    size * 0.5,
+    size * 0.18,
+    0,
+    size * 0.5,
+    size * 0.18,
+    size * 0.28,
+  );
+  spec.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+  spec.addColorStop(0.4, "rgba(255, 255, 255, 0.25)");
+  spec.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = spec;
+  ctx.fillRect(0, 0, size, size);
+
+  // Bottom rim glow in the site's accent blue — picks up the brand color
+  // along the underside of the bust so it cohabits with the starfield.
+  const rim = ctx.createRadialGradient(
+    size * 0.5,
+    size * 0.95,
+    0,
+    size * 0.5,
+    size * 0.7,
+    size * 0.55,
+  );
+  rim.addColorStop(0, "rgba(77, 142, 255, 0.6)");
+  rim.addColorStop(0.45, "rgba(77, 142, 255, 0.14)");
+  rim.addColorStop(1, "rgba(77, 142, 255, 0)");
+  ctx.fillStyle = rim;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.restore();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+};
+
 export function WireframeBust({
   className,
   modelPath = MODEL_PATH,
-  lineColor = LINE_COLOR,
-  lineOpacity = LINE_OPACITY,
   rotationSpeed = ROTATION_SPEED,
   scale = SCALE,
   background = BG_COLOR,
@@ -90,17 +149,20 @@ export function WireframeBust({
     );
     camera.position.set(0, 0, 3.6);
 
+    // Matcap material — needs no scene lights. The canvas texture below IS
+    // the lighting environment, baked into a 2D sphere image.
+    const matcapTexture = makeChromeMatcap();
+    const bustMaterial = new THREE.MeshMatcapMaterial({
+      matcap: matcapTexture,
+    });
+
     // Root that holds the loaded model; we rotate this, not the camera.
     const root = new THREE.Group();
     scene.add(root);
 
-    // --- load + convert to wireframe ---
+    // --- load model ---
     const loader = new GLTFLoader();
     let disposed = false;
-
-    // Animated gradient material is created inside onLoad; we keep a handle
-    // out here so the tick loop can update its time uniform every frame.
-    let animatedLineMaterial: THREE.ShaderMaterial | null = null;
 
     // Bust state shared between onLoad and handleResize so the fit can be
     // re-run when the container size changes. Null until the GLB loads.
@@ -149,98 +211,10 @@ export function WireframeBust({
     const onLoad = (gltf: { scene: THREE.Group }) => {
       if (disposed) return;
 
-      // Custom shader material: vertical color gradient using the hero's
-      // accent palette, with a slow time-driven drift that nudges the
-      // gradient stops up and down so the colors feel alive without
-      // anything obviously animating.
-      const lineMaterial = new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: true,
-        depthTest: true,
-        uniforms: {
-          uTime: { value: 0 },
-          uMinY: { value: 0 },
-          uMaxY: { value: 1 },
-          uOpacity: { value: lineOpacity },
-          // Hero palette
-          uPink: { value: new THREE.Color("#ec4899") },
-          uViolet: { value: new THREE.Color("#a78bfa") },
-          uCyan: { value: new THREE.Color("#22d3ee") },
-          uYellow: { value: new THREE.Color("#ffd131") },
-          // Base slate the gradient blends toward so it never looks like a
-          // rainbow blast. Lower mix => more colorful; higher => more slate.
-          uBase: { value: new THREE.Color(lineColor) },
-          uSaturation: { value: 0.55 },
-        },
-        vertexShader: /* glsl */ `
-          varying float vY;
-          varying float vX;
-          void main() {
-            // Use raw geometry position.x/.y (world-baked, pre-group-scale).
-            vY = position.y;
-            vX = position.x;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          uniform float uTime;
-          uniform float uMinY;
-          uniform float uMaxY;
-          uniform float uOpacity;
-          uniform float uSaturation;
-          uniform vec3 uPink;
-          uniform vec3 uViolet;
-          uniform vec3 uCyan;
-          uniform vec3 uYellow;
-          uniform vec3 uBase;
-          varying float vY;
-          varying float vX;
-
-          // Pick the right two colors to interpolate between based on phase.
-          // 4 colors -> 4 segments wrapping around: yellow -> cyan -> violet
-          // -> pink -> (back to yellow).
-          vec3 cyclicGradient(float phase) {
-            float seg = mod(phase, 4.0);
-            float f = fract(seg);
-            float i = floor(seg);
-            vec3 a, b;
-            if (i < 0.5) { a = uYellow; b = uCyan; }
-            else if (i < 1.5) { a = uCyan; b = uViolet; }
-            else if (i < 2.5) { a = uViolet; b = uPink; }
-            else { a = uPink; b = uYellow; }
-            return mix(a, b, smoothstep(0.0, 1.0, f));
-          }
-
-          void main() {
-            // 0..1 along vertical bust extent.
-            float t = clamp((vY - uMinY) / (uMaxY - uMinY), 0.0, 1.0);
-
-            // Slight horizontal warp so the gradient doesn't render as
-            // flat horizontal bands -- the colors weave diagonally and
-            // shift over time, giving a "consistently blending" feel.
-            float warp = sin(vX * 3.2 + uTime * 0.7) * 0.06
-                       + sin(vX * 5.1 - uTime * 0.45) * 0.04;
-
-            // Phase: t maps to [0..3] across the bust (covers 3 segments),
-            // plus a continuous time scroll so the colors flow upward and
-            // wrap around forever.
-            float phase = (t + warp) * 3.0 - uTime * 0.35;
-
-            vec3 color = cyclicGradient(phase);
-
-            // Blend toward slate so the wireframe still reads as
-            // structural, not a saturated rainbow.
-            color = mix(uBase, color, uSaturation);
-
-            gl_FragColor = vec4(color, uOpacity);
-          }
-        `,
-      });
-      animatedLineMaterial = lineMaterial;
-
-      // Walk the scene, swap each mesh for LineSegments(WireframeGeometry).
-      // Original meshes are made fully transparent so only the wireframe shows.
-      const wireGroup = new THREE.Group();
+      // Walk the scene and replace each mesh with a fresh mesh that uses
+      // the shared matcap material. We bake the original world transform
+      // into the clone so we don't need to keep the source hierarchy alive.
+      const bustGroupLocal = new THREE.Group();
       gltf.scene.updateMatrixWorld(true);
 
       const meshes: THREE.Mesh[] = [];
@@ -248,56 +222,33 @@ export function WireframeBust({
         if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh);
       });
 
-      // Surface material sits behind the wireframe so the bust reads as a
-      // solid 3D object instead of a transparent ghost during rotation.
-      // polygonOffset pushes it slightly back in depth so the wireframe
-      // lines stay crisp without z-fighting against the triangles.
-      const surfaceMaterial = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(SURFACE_COLOR),
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: 1,
-        side: THREE.FrontSide,
-      });
-
       for (const mesh of meshes) {
         const geom = mesh.geometry;
         if (!geom) continue;
-
-        // Solid surface clone of the mesh.
-        const surface = new THREE.Mesh(geom, surfaceMaterial);
+        // If the source GLB lacks vertex normals the matcap lookup falls
+        // back to face normals and the surface reads as facetted. Compute
+        // smooth normals when missing so the chrome shading stays glossy.
+        if (!geom.getAttribute("normal")) geom.computeVertexNormals();
+        const surface = new THREE.Mesh(geom, bustMaterial);
         surface.applyMatrix4(mesh.matrixWorld);
-        wireGroup.add(surface);
-
-        const wireGeom = new THREE.WireframeGeometry(geom);
-        const lines = new THREE.LineSegments(wireGeom, lineMaterial);
-        // Bake the mesh's world transform so we don't need the original hierarchy.
-        lines.applyMatrix4(mesh.matrixWorld);
-        wireGroup.add(lines);
+        bustGroupLocal.add(surface);
       }
 
       // Center + auto-fit so the bust sits nicely regardless of source units.
-      const box = new THREE.Box3().setFromObject(wireGroup);
+      const box = new THREE.Box3().setFromObject(bustGroupLocal);
       const size = new THREE.Vector3();
       const center = new THREE.Vector3();
       box.getSize(size);
       box.getCenter(center);
 
-      // Feed the gradient shader the model's Y bounds. The shader reads
-      // geometry-local position.y, which lives in the same space as
-      // box.min.y/box.max.y (the group's position offset doesn't alter
-      // geometry-local coordinates).
-      lineMaterial.uniforms.uMinY.value = box.min.y;
-      lineMaterial.uniforms.uMaxY.value = box.max.y;
-
       // Stash bust state so refit() can re-run scale + position whenever
       // the container size changes (e.g., resize between laptop & monitor).
-      bustGroup = wireGroup;
+      bustGroup = bustGroupLocal;
       bustSize = size;
       bustCenter = center;
       refit();
 
-      root.add(wireGroup);
+      root.add(bustGroupLocal);
 
       // Async shader compile -- uses KHR_parallel_shader_compile where
       // available so the compile work happens off the main thread instead
@@ -440,11 +391,6 @@ export function WireframeBust({
       root.rotation.y = autoYaw + dragYaw;
       root.rotation.x = 0;
 
-      // Advance the gradient shader's time so the colors drift continuously.
-      if (animatedLineMaterial) {
-        animatedLineMaterial.uniforms.uTime.value = now * 0.001;
-      }
-
       renderer.render(scene, camera);
       rafId = requestAnimationFrame(tick);
     };
@@ -470,19 +416,14 @@ export function WireframeBust({
         if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
         else mat?.dispose?.();
       });
+      bustMaterial.dispose();
+      matcapTexture?.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
       }
     };
-  }, [
-    modelPath,
-    lineColor,
-    lineOpacity,
-    rotationSpeed,
-    scale,
-    background,
-  ]);
+  }, [modelPath, rotationSpeed, scale, background]);
 
   return <div ref={containerRef} className={className} />;
 }

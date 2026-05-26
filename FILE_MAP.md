@@ -133,15 +133,17 @@ Major internals:
 
 ## Public assets (`public/`)
 
-- `models/oziel-bust.glb` — decimated bust mesh loaded by `wireframe-bust.tsx` at runtime. Hero-critical; do not rename without updating `MODEL_PATH` in that file.
-- `models/oziel-bust.original.glb` — pre-decimation source mesh, kept for re-runs of `scripts/decimate-bust.mjs`. Not loaded at runtime.
-- `oziel-portrait.jpeg` — debug-only reference photo for `systems-diagram.tsx` (see that file's `SHOW_PORTRAIT_REFERENCE`).
+- `OzzyRightSide.png` — source studio shot sampled by `code-matter-portrait.tsx` to generate the character-glyph hero portrait.
+- `Oziel.png`, `OzzyLeftSide.png` — alternate source crops kept for future portrait passes; not currently loaded at runtime.
+- `oziel-portrait.jpeg` — debug-only reference photo for `systems-diagram.tsx` (`SHOW_PORTRAIT_REFERENCE`).
+- `referenceImageCodeGlyph.jpg` — design reference for the code-glyph portrait aesthetic; not loaded at runtime.
 
-## Repo-root scripts / config
+## Archive (`archive/`)
 
-- `make_clean_wireframe_bust.py` — Blender-side helper to produce a clean bust mesh feeding `wireframe-bust.tsx`. Companion to `scripts/blender/create_graph_bust.py`.
-- `scripts/blender/create_graph_bust.py` — Blender script that authors the graph-style bust geometry. Run inside Blender; output gets exported to GLB.
-- `scripts/decimate-bust.mjs` — Node script that decimates `public/models/oziel-bust.original.glb` into the runtime-loaded `public/models/oziel-bust.glb`.
+- `wireframe-bust/` — retired hero accent. The Three.js + GLB chrome-bust that used to occupy the right side of the hero, plus its decimation/Blender pipeline. Re-mount instructions live in `archive/wireframe-bust/README.md`.
+
+## Repo-root config
+
 - `next.config.ts` — Next.js config; only sets `turbopack.root` to the project dir.
 - `next-env.d.ts` — Next-generated TS ambient types (don't edit).
 - `tsconfig.json` — strict TS, `@/* → ./src/*` path alias, JSX `react-jsx`.
