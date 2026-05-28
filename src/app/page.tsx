@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "motion/react";
+import { HeroSection } from "@/components/hero-section";
 import { SectionRail } from "@/components/section-rail";
-import { StarIntro } from "@/components/star-intro";
 import { SECTIONS } from "@/lib/sections";
+
+// The hero owns its own entrance animation; the section rail just
+// waits a beat after first paint so it doesn't compete with the
+// portrait decode + name landing. Tuned to fire right after the
+// tagline appears.
+const RAIL_DELAY_MS = 1500;
 
 const SECTION_TINTS: Record<string, string> = {
   about: "from-pink-50 via-white to-white",
@@ -13,18 +20,22 @@ const SECTION_TINTS: Record<string, string> = {
 };
 
 export default function Home() {
-  const [introDone, setIntroDone] = useState(false);
+  const reduce = useReducedMotion();
+  const [railReady, setRailReady] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const tickingRef = useRef(false);
 
   useEffect(() => {
-    const onDone = () => setIntroDone(true);
-    window.addEventListener("steezy:intro-done", onDone);
-    return () => window.removeEventListener("steezy:intro-done", onDone);
-  }, []);
+    if (reduce) {
+      setRailReady(true);
+      return;
+    }
+    const t = window.setTimeout(() => setRailReady(true), RAIL_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [reduce]);
 
   useEffect(() => {
-    if (!introDone) return;
+    if (!railReady) return;
     const update = () => {
       tickingRef.current = false;
       const center = window.innerHeight / 2;
@@ -56,12 +67,12 @@ export default function Home() {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
     };
-  }, [introDone]);
+  }, [railReady]);
 
   return (
     <main>
-      <StarIntro />
-      {introDone && <SectionRail activeId={activeId} />}
+      <HeroSection />
+      {railReady && <SectionRail activeId={activeId} />}
       {SECTIONS.map((s) => (
         <section
           key={s.id}

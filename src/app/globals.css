@@ -135,15 +135,6 @@
   }
 }
 
-/* While Steezy's intro is still running we lock body scroll so the user
-   can't slip past the hero before the morph + name-reveal complete. The
-   section rail isn't mounted until the intro completes (page.tsx
-   subscribes to the "steezy:intro-done" event), so no CSS gate needed. */
-html.intro-active,
-html.intro-active body {
-  overflow: hidden;
-}
-
 /* Site-wide film grain. Fixed so it stays put during scroll — adds a
    subtle printed/tactile texture across every section without
    competing with content. The data-URI'd SVG generates the noise on

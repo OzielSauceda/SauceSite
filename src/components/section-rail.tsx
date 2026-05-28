@@ -24,10 +24,15 @@ export function SectionRail({ activeId }: Props) {
     return () => window.removeEventListener("resize", measure);
   }, []);
 
-  // Matches heroStageScale in star-intro.tsx -- use max so the rail
-  // scales in sync with the hero artboard, which now COVERS the viewport
-  // instead of fitting inside it.
-  const stageScale = Math.max(viewport.width / 1440, viewport.height / 768);
+  // Matches heroStageScale in star-intro.tsx -- cover-scaled but capped
+  // at 1.15 so the rail stops growing on ultrawides and 1920×1080. The
+  // desktop rail is hidden below 1200px (see classes); the bottom-right
+  // popover handles tablet/mobile, so this scale only affects ≥1200.
+  const DESKTOP_MAX_SCALE = 1.15;
+  const stageScale = Math.min(
+    DESKTOP_MAX_SCALE,
+    Math.max(viewport.width / 1440, viewport.height / 768),
+  );
   const stageGutter = (viewport.width - 1440 * stageScale) / 2;
 
   const handleClick = (
@@ -57,7 +62,7 @@ export function SectionRail({ activeId }: Props) {
       <nav
         data-rail
         aria-label="Sections"
-        className="fixed top-1/2 z-40 hidden md:block"
+        className="fixed top-1/2 z-40 hidden min-[1200px]:block"
         style={{
           // Fixed 30px gap from viewport right edge -- matches the laptop
           // look exactly. The scale below still grows the rail's text on
@@ -114,7 +119,7 @@ export function SectionRail({ activeId }: Props) {
         </ol>
       </nav>
 
-      <div data-rail className="fixed bottom-5 right-4 z-40 md:hidden">
+      <div data-rail className="fixed bottom-5 right-4 z-40 min-[1200px]:hidden">
         <AnimatePresence>
           {mobileOpen && (
             <motion.div
