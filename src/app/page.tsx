@@ -1,16 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useReducedMotion } from "motion/react";
 import { HeroSection } from "@/components/hero-section";
-import { SectionRail } from "@/components/section-rail";
+import { SiteHeader } from "@/components/site-header";
 import { SECTIONS } from "@/lib/sections";
-
-// The hero owns its own entrance animation; the section rail just
-// waits a beat after first paint so it doesn't compete with the
-// portrait decode + name landing. Tuned to fire right after the
-// tagline appears.
-const RAIL_DELAY_MS = 1500;
 
 const SECTION_TINTS: Record<string, string> = {
   about: "from-pink-50 via-white to-white",
@@ -20,40 +13,27 @@ const SECTION_TINTS: Record<string, string> = {
 };
 
 export default function Home() {
-  const reduce = useReducedMotion();
-  const [railReady, setRailReady] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const tickingRef = useRef(false);
 
   useEffect(() => {
-    if (reduce) {
-      setRailReady(true);
-      return;
-    }
-    const t = window.setTimeout(() => setRailReady(true), RAIL_DELAY_MS);
-    return () => window.clearTimeout(t);
-  }, [reduce]);
-
-  useEffect(() => {
-    if (!railReady) return;
     const update = () => {
       tickingRef.current = false;
       const center = window.innerHeight / 2;
-      let bestId: string | null = null;
-      let bestDist = Infinity;
+      // Active only when a section actually spans the viewport centre. The
+      // hero isn't in SECTIONS, so at the top nothing is active — no nav
+      // highlight, and the header keeps its light-on-dark hero theme.
+      let found: string | null = null;
       for (const s of SECTIONS) {
         const el = document.getElementById(s.id);
         if (!el) continue;
         const rect = el.getBoundingClientRect();
-        if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
-        const c = rect.top + rect.height / 2;
-        const d = Math.abs(c - center);
-        if (d < bestDist) {
-          bestDist = d;
-          bestId = s.id;
+        if (rect.top <= center && rect.bottom >= center) {
+          found = s.id;
+          break;
         }
       }
-      setActiveId(bestId);
+      setActiveId(found);
     };
     const onScroll = () => {
       if (tickingRef.current) return;
@@ -67,12 +47,12 @@ export default function Home() {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
     };
-  }, [railReady]);
+  }, []);
 
   return (
     <main>
+      <SiteHeader activeId={activeId} />
       <HeroSection />
-      {railReady && <SectionRail activeId={activeId} />}
       {SECTIONS.map((s) => (
         <section
           key={s.id}
